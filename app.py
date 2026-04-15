@@ -6,11 +6,15 @@ import seaborn as sns
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, roc_curve
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
+from tensorflow.keras.callbacks import EarlyStopping
 
 sns.set_theme(style='whitegrid')
 
-st.title("Customer Churn Analysis")
-st.markdown("Exploratory data analysis and predictive modeling on the Bank Customer Churn dataset.")
+st.title("Customer Churn Predictor")
+st.markdown("Exploratory Data Analysis and Churn Prediction using **Artificial Neural Network (ANN)**.")
 
 # ── 1. Load Data ──────────────────────────────────────────────────────────────
 st.header("1. Load Data")
@@ -26,7 +30,7 @@ st.dataframe(df.head())
 # ── 2. EDA ────────────────────────────────────────────────────────────────────
 st.header("2. Exploratory Data Analysis")
 
-st.subheader("Dataset Info")
+st.subheader("Dataset Statistics")
 st.write(df.describe())
 
 st.subheader("Missing Values")
@@ -86,90 +90,124 @@ plt.tight_layout()
 st.pyplot(fig)
 
 # ── 3. Preprocessing ──────────────────────────────────────────────────────────
-st.header("3. Preprocessing & Model Training")
+st.header("3. Data Preprocessing")
 
 @st.cache_data
-def preprocess_and_train(df):
+def preprocess(df):
     data = df.drop(['RowNumber', 'CustomerId', 'Surname'], axis=1)
     le = LabelEncoder()
     data['Geography'] = le.fit_transform(data['Geography'])
     data['Gender'] = le.fit_transform(data['Gender'])
-
     X = data.drop('Exited', axis=1)
     y = data['Exited']
-
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42)
-
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
+    return X_train_scaled, X_test_scaled, y_train.values, y_test.values, X.columns.tolist()
 
-    return X_train_scaled, X_test_scaled, y_train, y_test, X.columns.tolist()
+X_train, X_test, y_train, y_test, feature_names = preprocess(df)
+st.success(f"Training samples: {X_train.shape[0]} | Test samples: {X_test.shape[0]} | Features: {X_train.shape[1]}")
 
-X_train, X_test, y_train, y_test, feature_names = preprocess_and_train(df)
+# ── 4. ANN Model ──────────────────────────────────────────────────────────────
+st.header("4. ANN Model Configuration")
 
-# Model selection
-model_name = st.selectbox("Select Model", ["Logistic Regression", "Random Forest", "Gradient Boosting"])
+col1, col2, col3 = st.columns(3)
+with col1:
+    epochs = st.slider("Epochs", 10, 100, 50)
+with col2:
+    batch_size = st.slider("Batch Size", 16, 128, 32)
+with col3:
+    dropout_rate = st.slider("Dropout Rate", 0.0, 0.5, 0.2)
 
-@st.cache_data
-def train_model(model_name, X_train, y_train):
-    if model_name == "Logistic Regression":
-        from sklearn.linear_model import LogisticRegression
-        model = LogisticRegression(max_iter=1000, random_state=42)
-    elif model_name == "Random Forest":
-        from sklearn.ensemble import RandomForestClassifier
-        model = RandomForestClassifier(n_estimators=100, random_state=42)
-    else:
-        from sklearn.ensemble import GradientBoostingClassifier
-        model = GradientBoostingClassifier(n_estimators=100, random_state=42)
-    model.fit(X_train, y_train)
-    return model
+if st.button("Train ANN Model"):
+    with st.spinner("Training ANN... please wait"):
 
-model = train_model(model_name, X_train, y_train)
-y_pred = model.predict(X_test)
-y_prob = model.predict_proba(X_test)[:, 1]
+        # Build ANN
+        model = Sequential([
+            Dense(64, activation='relu', input_shape=(X_train.shape[1],)),
+            BatchNormalization(),
+            Dropout(dropout_rate),
+            Dense(32, activation='relu'),
+            BatchNormalization(),
+            Dropout(dropout_rate),
+            Dense(16, activation='relu'),
+            Dense(1, activation='sigmoid')
+        ])
 
-# ── 4. Results ────────────────────────────────────────────────────────────────
-st.header("4. Model Results")
+        model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
 
-st.subheader("Classification Report")
-report = classification_report(y_test, y_pred, output_dict=True)
-st.dataframe(pd.DataFrame(report).transpose())
+        early_stop = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
 
-st.subheader("Confusion Matrix")
-fig, ax = plt.subplots(figsize=(6, 5))
-cm = confusion_matrix(y_test, y_pred)
-sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax,
-            xticklabels=['Retained', 'Churned'],
-            yticklabels=['Retained', 'Churned'])
-ax.set_ylabel('Actual')
-ax.set_xlabel('Predicted')
-ax.set_title('Confusion Matrix')
-plt.tight_layout()
-st.pyplot(fig)
+        history = model.fit(
+            X_train, y_train,
+            epochs=epochs,
+            batch_size=batch_size,
+            validation_split=0.2,
+            callbacks=[early_stop],
+            verbose=0
+        )
 
-st.subheader("ROC Curve")
-fpr, tpr, _ = roc_curve(y_test, y_prob)
-auc = roc_auc_score(y_test, y_prob)
-fig, ax = plt.subplots(figsize=(7, 5))
-ax.plot(fpr, tpr, color='#e74c3c', lw=2, label=f'AUC = {auc:.3f}')
-ax.plot([0, 1], [0, 1], color='gray', linestyle='--')
-ax.set_xlabel('False Positive Rate')
-ax.set_ylabel('True Positive Rate')
-ax.set_title('ROC Curve')
-ax.legend()
-plt.tight_layout()
-st.pyplot(fig)
+    st.success("Model training complete!")
 
-# Feature importance (tree-based models only)
-if model_name in ["Random Forest", "Gradient Boosting"]:
-    st.subheader("Feature Importance")
-    importances = model.feature_importances_
-    fi = pd.Series(importances, index=feature_names).sort_values(ascending=False)
-    fig, ax = plt.subplots(figsize=(10, 5))
-    fi.plot(kind='bar', ax=ax, color='#3498db', edgecolor='black')
-    ax.set_title('Feature Importance')
-    ax.set_ylabel('Importance')
+    # ── 5. Training History ───────────────────────────────────────────────────
+    st.header("5. Training History")
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    axes[0].plot(history.history['loss'], label='Train Loss', color='#e74c3c')
+    axes[0].plot(history.history['val_loss'], label='Val Loss', color='#3498db')
+    axes[0].set_title('Loss over Epochs')
+    axes[0].set_xlabel('Epoch')
+    axes[0].set_ylabel('Loss')
+    axes[0].legend()
+
+    axes[1].plot(history.history['accuracy'], label='Train Accuracy', color='#e74c3c')
+    axes[1].plot(history.history['val_accuracy'], label='Val Accuracy', color='#3498db')
+    axes[1].set_title('Accuracy over Epochs')
+    axes[1].set_xlabel('Epoch')
+    axes[1].set_ylabel('Accuracy')
+    axes[1].legend()
     plt.tight_layout()
     st.pyplot(fig)
+
+    # ── 6. Evaluation ─────────────────────────────────────────────────────────
+    st.header("6. Model Evaluation")
+
+    y_prob = model.predict(X_test).flatten()
+    y_pred = (y_prob >= 0.5).astype(int)
+
+    st.subheader("Classification Report")
+    report = classification_report(y_test, y_pred, output_dict=True)
+    st.dataframe(pd.DataFrame(report).transpose())
+
+    st.subheader("Confusion Matrix")
+    fig, ax = plt.subplots(figsize=(6, 5))
+    cm = confusion_matrix(y_test, y_pred)
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax,
+                xticklabels=['Retained', 'Churned'],
+                yticklabels=['Retained', 'Churned'])
+    ax.set_ylabel('Actual')
+    ax.set_xlabel('Predicted')
+    ax.set_title('Confusion Matrix')
+    plt.tight_layout()
+    st.pyplot(fig)
+
+    st.subheader("ROC Curve")
+    fpr, tpr, _ = roc_curve(y_test, y_prob)
+    auc = roc_auc_score(y_test, y_prob)
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ax.plot(fpr, tpr, color='#e74c3c', lw=2, label=f'AUC = {auc:.3f}')
+    ax.plot([0, 1], [0, 1], color='gray', linestyle='--')
+    ax.set_xlabel('False Positive Rate')
+    ax.set_ylabel('True Positive Rate')
+    ax.set_title('ROC Curve')
+    ax.legend()
+    plt.tight_layout()
+    st.pyplot(fig)
+
+    # Final metrics
+    st.subheader("Summary Metrics")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Accuracy", f"{(y_pred == y_test).mean():.2%}")
+    col2.metric("AUC Score", f"{auc:.3f}")
+    col3.metric("Epochs Trained", len(history.history['loss']))
