@@ -6,10 +6,7 @@ import seaborn as sns
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, roc_curve
-import tensorflow as tf
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
-from tensorflow.keras.callbacks import EarlyStopping
+from sklearn.neural_network import MLPClassifier
 
 sns.set_theme(style='whitegrid')
 
@@ -97,84 +94,68 @@ def preprocess(df):
     data = df.drop(['RowNumber', 'CustomerId', 'Surname'], axis=1)
     le = LabelEncoder()
     data['Geography'] = le.fit_transform(data['Geography'])
-    data['Gender'] = le.fit_transform(data['Gender'])
+    data['Gender']    = le.fit_transform(data['Gender'])
     X = data.drop('Exited', axis=1)
     y = data['Exited']
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42)
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
+    X_test_scaled  = scaler.transform(X_test)
     return X_train_scaled, X_test_scaled, y_train.values, y_test.values, X.columns.tolist()
 
 X_train, X_test, y_train, y_test, feature_names = preprocess(df)
 st.success(f"Training samples: {X_train.shape[0]} | Test samples: {X_test.shape[0]} | Features: {X_train.shape[1]}")
 
-# ── 4. ANN Model ──────────────────────────────────────────────────────────────
+# ── 4. ANN Configuration ──────────────────────────────────────────────────────
 st.header("4. ANN Model Configuration")
 
 col1, col2, col3 = st.columns(3)
 with col1:
-    epochs = st.slider("Epochs", 10, 100, 50)
+    hidden_layer_1 = st.slider("Neurons - Layer 1", 32, 256, 64)
 with col2:
-    batch_size = st.slider("Batch Size", 16, 128, 32)
+    hidden_layer_2 = st.slider("Neurons - Layer 2", 16, 128, 32)
 with col3:
-    dropout_rate = st.slider("Dropout Rate", 0.0, 0.5, 0.2)
+    max_iter = st.slider("Max Iterations (Epochs)", 50, 500, 200)
+
+activation = st.selectbox("Activation Function", ["relu", "tanh", "logistic"])
 
 if st.button("Train ANN Model"):
     with st.spinner("Training ANN... please wait"):
 
-        # Build ANN
-        model = Sequential([
-            Dense(64, activation='relu', input_shape=(X_train.shape[1],)),
-            BatchNormalization(),
-            Dropout(dropout_rate),
-            Dense(32, activation='relu'),
-            BatchNormalization(),
-            Dropout(dropout_rate),
-            Dense(16, activation='relu'),
-            Dense(1, activation='sigmoid')
-        ])
-
-        model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-
-        early_stop = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
-
-        history = model.fit(
-            X_train, y_train,
-            epochs=epochs,
-            batch_size=batch_size,
-            validation_split=0.2,
-            callbacks=[early_stop],
-            verbose=0
+        model = MLPClassifier(
+            hidden_layer_sizes=(hidden_layer_1, hidden_layer_2),
+            activation=activation,
+            solver='adam',
+            max_iter=max_iter,
+            random_state=42,
+            early_stopping=True,
+            validation_fraction=0.2,
+            verbose=False
         )
+        model.fit(X_train, y_train)
 
     st.success("Model training complete!")
 
-    # ── 5. Training History ───────────────────────────────────────────────────
-    st.header("5. Training History")
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    axes[0].plot(history.history['loss'], label='Train Loss', color='#e74c3c')
-    axes[0].plot(history.history['val_loss'], label='Val Loss', color='#3498db')
-    axes[0].set_title('Loss over Epochs')
-    axes[0].set_xlabel('Epoch')
-    axes[0].set_ylabel('Loss')
-    axes[0].legend()
-
-    axes[1].plot(history.history['accuracy'], label='Train Accuracy', color='#e74c3c')
-    axes[1].plot(history.history['val_accuracy'], label='Val Accuracy', color='#3498db')
-    axes[1].set_title('Accuracy over Epochs')
-    axes[1].set_xlabel('Epoch')
-    axes[1].set_ylabel('Accuracy')
-    axes[1].legend()
+    # ── 5. Training Loss Curve ────────────────────────────────────────────────
+    st.header("5. Training Loss Curve")
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.plot(model.loss_curve_, label='Train Loss', color='#e74c3c')
+    if model.validation_scores_ is not None:
+        ax.plot(model.best_validation_score_ * np.ones(len(model.loss_curve_)),
+                linestyle='--', color='#3498db', label=f'Best Val Score: {model.best_validation_score_:.4f}')
+    ax.set_title('Loss over Iterations')
+    ax.set_xlabel('Iteration')
+    ax.set_ylabel('Loss')
+    ax.legend()
     plt.tight_layout()
     st.pyplot(fig)
 
     # ── 6. Evaluation ─────────────────────────────────────────────────────────
     st.header("6. Model Evaluation")
 
-    y_prob = model.predict(X_test).flatten()
-    y_pred = (y_prob >= 0.5).astype(int)
+    y_pred = model.predict(X_test)
+    y_prob = model.predict_proba(X_test)[:, 1]
 
     st.subheader("Classification Report")
     report = classification_report(y_test, y_pred, output_dict=True)
@@ -205,9 +186,9 @@ if st.button("Train ANN Model"):
     plt.tight_layout()
     st.pyplot(fig)
 
-    # Final metrics
-    st.subheader("Summary Metrics")
+    # ── 7. Summary ────────────────────────────────────────────────────────────
+    st.header("7. Summary Metrics")
     col1, col2, col3 = st.columns(3)
-    col1.metric("Accuracy", f"{(y_pred == y_test).mean():.2%}")
-    col2.metric("AUC Score", f"{auc:.3f}")
-    col3.metric("Epochs Trained", len(history.history['loss']))
+    col1.metric("Accuracy",    f"{(y_pred == y_test).mean():.2%}")
+    col2.metric("AUC Score",   f"{auc:.3f}")
+    col3.metric("Iterations",  f"{model.n_iter_}")
