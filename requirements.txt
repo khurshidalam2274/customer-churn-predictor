@@ -4,4 +4,4 @@ matplotlib
 seaborn
 scikit-learn
 streamlit
-tensorflow
+tensorflow-cpu==2.15.1
