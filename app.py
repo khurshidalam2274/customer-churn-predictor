@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, StandardScaler
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.neural_network import MLPClassifier
 
 st.title("Customer Churn Predictor")
 
@@ -20,8 +20,14 @@ def load_and_train():
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
-    model = RandomForestClassifier(n_estimators=200, max_depth=10,
-                                    class_weight='balanced', random_state=42)
+    # ANN: 2 hidden layers (64 and 32 neurons), ReLU activation, trained with Adam optimizer
+    model = MLPClassifier(
+        hidden_layer_sizes=(64, 32),
+        activation='relu',
+        solver='adam',
+        max_iter=500,
+        random_state=42
+    )
     model.fit(X_train_scaled, y_train)
     return model, scaler, le_geo, le_gen
 
